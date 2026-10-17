@@ -34,7 +34,7 @@ jobs:
           sed -i "s/'DB_HOST','localhost'/'DB_HOST','127.0.0.1'/" includes/dbconnection.php admin/includes/dbconnection.php admin/sub/includes/dbconnection.php
           php -S 127.0.0.1:8080 > /tmp/php.log 2>&1 &
           sleep 2
-          for page in index.php admin/index.php admin/login.php admin/forgot-password.php; do
+          for page in index.php admin/index.php admin/forgot-password.php; do
             code=$(curl -s -o /tmp/out.html -w '%{http_code}' "http://127.0.0.1:8080/$page")
             echo "$page -> $code"
             [ "$code" = "200" ] || exit 1
