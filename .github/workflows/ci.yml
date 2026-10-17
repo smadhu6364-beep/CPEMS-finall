@@ -1,0 +1,51 @@
+name: PHP check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: cpms
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_mysql
+      - name: Lint every PHP file
+        run: find c-curfew -name '*.php' -print0 | xargs -0 -n1 php -l | grep -v '^No syntax errors' || true; find c-curfew -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+      - name: Import schema
+        run: mysql -h 127.0.0.1 -u root cpms < c-curfew/c-curfew/SQL/cmps.sql
+      - name: Serve and smoke-test pages
+        working-directory: c-curfew/c-curfew
+        run: |
+          # The app connects to "localhost"; point it at the TCP service for CI only
+          sed -i "s/'DB_HOST','localhost'/'DB_HOST','127.0.0.1'/" includes/dbconnection.php admin/includes/dbconnection.php admin/sub/includes/dbconnection.php
+          php -S 127.0.0.1:8080 > /tmp/php.log 2>&1 &
+          sleep 2
+          for page in index.php admin/index.php admin/login.php admin/forgot-password.php; do
+            code=$(curl -s -o /tmp/out.html -w '%{http_code}' "http://127.0.0.1:8080/$page")
+            echo "$page -> $code"
+            [ "$code" = "200" ] || exit 1
+            if grep -qiE 'Fatal error|Parse error' /tmp/out.html; then cat /tmp/out.html; exit 1; fi
+          done
+          # log in as the seeded admin and load the dashboard
+          curl -s -c /tmp/jar -b /tmp/jar -o /tmp/login.html -d 'username=admin&password=Test@123&login=Login' http://127.0.0.1:8080/admin/index.php
+          grep -q "dashboard.php" /tmp/login.html || { echo "login failed"; cat /tmp/login.html; exit 1; }
+          for page in dashboard.php manage-pass.php add-pass.php manage-category.php search-pass.php; do
+            curl -s -b /tmp/jar -o /tmp/out.html "http://127.0.0.1:8080/admin/$page"
+            if grep -qiE 'Fatal error|Parse error|Uncaught' /tmp/out.html; then echo "$page failed"; cat /tmp/out.html; exit 1; fi
+            echo "admin/$page ok"
+          done
+          cat /tmp/php.log
